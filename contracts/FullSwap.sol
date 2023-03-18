@@ -9,7 +9,7 @@ import "@gridexprotocol/core/contracts/libraries/BoundaryMath.sol";
 import "./interfaces/ISwapRouter.sol";
 
 
-contract ExampleSwap {
+contract FullSwap {
     ISwapRouter public immutable router;
 
     address public constant WETH9 = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
