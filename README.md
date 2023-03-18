@@ -1,2 +1,3 @@
 # PBWH-contracts
-Smart contracts 
+Smart contracts for ParisBlockchainWeek.
+ 
