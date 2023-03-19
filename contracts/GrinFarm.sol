@@ -9,7 +9,7 @@ import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 
 
-interface IxGRINToken {
+interface IxGRINToken is IERC20Upgradeable {
     function mint(address _to, uint256 _value) external returns (bool);
 
     function burn(address _from, uint256 _value) external returns (bool);

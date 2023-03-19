@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity =0.8.9;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -7,7 +7,6 @@ import "@gridexprotocol/core/contracts/interfaces/IGrid.sol";
 import "@gridexprotocol/core/contracts/libraries/GridAddress.sol";
 import "@gridexprotocol/core/contracts/libraries/BoundaryMath.sol";
 import "./interfaces/ISwapRouter.sol";
-
 
 contract FullSwap {
     ISwapRouter public immutable router;
