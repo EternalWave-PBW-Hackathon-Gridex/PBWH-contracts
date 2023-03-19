@@ -115,8 +115,7 @@ contract BIIndexFund is Ownable, Pausable{
     // ============ End of ERC20 =================
 
     IMakerOrderManager public immutable makerOrderManager;
-    int24 public constant RESOLUTION = 5;
-
+    int24 public RESOLUTION;
 
     uint256 public constant VERSION = 1;
 
@@ -146,18 +145,17 @@ contract BIIndexFund is Ownable, Pausable{
 
     constructor(
         address _owner,
-        IERC20 _lpToken,
         uint256 _rebalancingPeriod,
         uint256 _rebalancingThreshold,
         address _token0,
         address _token1,
         address _operator,
-        IMakerOrderManager _makerOrderManager
+        IMakerOrderManager _makerOrderManager,
+        int24 _RESOLUTION
     ) {
         require(_token0 != _token1);
         _transferOwnership(_owner);
 
-        lpToken = IERC20(_lpToken);
         token0 = _token0;
         token1 = _token1;
         rebalancingPeriod = _rebalancingPeriod;
@@ -165,6 +163,7 @@ contract BIIndexFund is Ownable, Pausable{
         operator = _operator;
 
         makerOrderManager = _makerOrderManager;
+        RESOLUTION = _RESOLUTION;
     }
 
     function transfer(address _to, uint _value) public nonReentrant returns (bool) {
