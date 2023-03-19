@@ -1,15 +1,15 @@
-//SPDX-License-Identifier: UNLICENSED
+//SPDX-License-Identifier: MIT
 pragma solidity ^0.8.9;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-interface IxSHOToken  {
+interface IxGRINToken  {
     function mint(address _to, uint256 _value) external returns (bool);
     function burn(address _from, uint256 _value) external returns (bool);
 }
 
-contract xSHO is IERC20, Ownable {
+contract xGRIN is IERC20, Ownable {
     string public constant name = "GRIN Compounding Token"; // Can be modified.
     string public constant symbol = "xGRIN";
     uint8 public constant decimals = 18;
@@ -21,7 +21,7 @@ contract xSHO is IERC20, Ownable {
 
     /**
      @notice Approve contracts to mint and renounce ownership
-    @dev In production the only minters should be `SHOFarm`
+    @dev In production the only minters GRINuld be `GRINFarm`
              Addresses are given via dynamic array to allow extra minters during testing
      */
     function setOperator(address[] calldata _operators) external onlyOwner {
@@ -98,7 +98,7 @@ contract xSHO is IERC20, Ownable {
     }
 
     /**
-        @notice Mint xSHO
+        @notice Mint xGRIN
         @param _value The amount of tokens to be minted
         @param _to receiver of the token
      */
@@ -114,7 +114,7 @@ contract xSHO is IERC20, Ownable {
     }
 
     /**
-        @notice Burn xSHO
+        @notice Burn xGRIN
         @param _value The amount of tokens to be burned
      */
     function burn(address _from, uint256 _value)
