@@ -1,260 +1,309 @@
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.9;
+//SPDX-License-Identifier: MIT
+pragma solidity ^0.8.9;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
 
-library SafeMath {
-    function add(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = a + b;
-        require(c >= a, "SafeMath: addition overflow");
+contract FundFarm is
+    Initializable,
+    UUPSUpgradeable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
+{
+    using SafeERC20Upgradeable for IERC20Upgradeable;
 
-        return c;
+    /* ========== STATE VARIABLES ========== */
+
+    struct Reward {
+        uint256 periodFinish;
+        uint256 rewardRate;
+        uint256 lastUpdateTime;
+        uint256 rewardPerTokenStored;
+        uint256 balance;
+    }
+    IERC20Upgradeable public stakingToken;
+    address[1] public rewardTokens;
+    mapping(address => Reward) public rewardData;
+
+    address public rewardsDistribution;
+
+    // user -> reward token -> amount
+    mapping(address => mapping(address => uint256))
+        public userRewardPerTokenPaid;
+    mapping(address => mapping(address => uint256)) public rewards;
+
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+
+    uint256 public REWARDS_DURATION;
+
+    event RewardAdded(address indexed rewardsToken, uint256 reward);
+    event Staked(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event RewardPaid(
+        address indexed user,
+        address indexed rewardsToken,
+        uint256 reward
+    );
+    event RewardsDurationUpdated(uint256 newDuration);
+    event UpdateReward(
+        address rewardToken,
+        uint256 rewardPerTokenStored,
+        address user,
+        uint256 earned,
+        uint256 userRewardPerTokenPaid
+    );
+
+    /* ========== Restricted Function  ========== */
+
+    /**
+        @notice Initialize UUPS upgradeable smart contract.
+     */
+    function initialize() external initializer {
+        __Ownable_init();
+        __ReentrancyGuard_init();
+        __Pausable_init();
     }
 
-    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
-        return sub(a, b, "SafeMath: subtraction overflow");
+    /**
+        @notice restrict upgrade to only owner.
+     */
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        virtual
+        override
+        onlyOwner
+    {}
+
+    /**
+        @notice pause contract functions.
+     */
+    function pause() external onlyOwner whenNotPaused {
+        _pause();
     }
 
-    function sub(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
-        require(b <= a, errorMessage);
-        uint256 c = a - b;
-
-        return c;
+    /**
+        @notice unpause contract functions.
+     */
+    function unpause() external onlyOwner whenPaused {
+        _unpause();
     }
 
-    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-        if (a == 0) {
-            return 0;
-        }
-
-        uint256 c = a * b;
-        require(c / a == b, "SafeMath: multiplication overflow");
-
-        return c;
+    /**
+     @notice sets initialInfo of the contract.
+     */
+    function setInitialInfo(
+        address _stakingToken,
+        address[1] memory _rewardTokens,
+        uint256 _rewardDuration,
+        address _rewardsDistribution
+    ) external onlyOwner {
+        stakingToken = IERC20Upgradeable(_stakingToken);
+        rewardTokens = _rewardTokens; 
+        REWARDS_DURATION = _rewardDuration;
+        rewardsDistribution = _rewardsDistribution;
     }
 
-    function div(uint256 a, uint256 b) internal pure returns (uint256) {
-        return div(a, b, "SafeMath: division by zero");
-    }
+    function updateRewardAmount(uint256 _uid, uint256 _amount)
+        external
+        onlyRewardsDistribution
+        updateReward(address(0))
+    {
+        require(_amount > 0, "Update Reward Amount should be bigger than 0");
+        address token = rewardTokens[_uid];
+        if (token != address(0)) {
+            Reward storage r = rewardData[token];
+            IERC20Upgradeable(token).safeTransferFrom(
+                msg.sender,
+                address(this),
+                _amount
+            );
 
-    function div(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
-        require(b > 0, errorMessage);
-        uint256 c = a / b;
-
-        return c;
-    }
-
-    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
-        return mod(a, b, "SafeMath: modulo by zero");
-    }
-
-    function mod(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
-        require(b != 0, errorMessage);
-        return a % b;
-    }
-
-    function ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {
-        // (a + b - 1) / b can overflow on addition, so we distribute.
-        return a / b + (a % b == 0 ? 0 : 1);
-    }
-}
-
-// Farm distributes the ERC20 rewards based on staked LP to each user.
-// Cloned from https://github.com/SashimiProject/sashimiswap/blob/master/contracts/MasterChef.sol
-// Modified by LTO Network to work for non-mintable ERC20.
-contract FundFarm is Ownable {
-    using SafeMath for uint256;
-    using SafeERC20 for IERC20;
-
-    // Info of each user.
-    struct UserInfo {
-        uint256 amount;     // How many LP tokens the user has provided.
-        uint256 rewardDebt; // Reward debt. See explanation below.
-    }
-
-    // Info of each pool.
-    struct PoolInfo {
-        IERC20 lpToken;             // Address of LP token contract.
-        uint256 allocPoint;         // How many allocation points assigned to this pool. ERC20s to distribute per block.
-        uint256 lastRewardBlock;    // Last block number that ERC20s distribution occurs.
-        uint256 accERC20PerShare;   // Accumulated ERC20s per share, times 1e36.
-    }
-
-    // Address of GRIN Token
-    IERC20 public erc20;
-    // The total amount of ERC20 that's paid out as reward.
-    uint256 public paidOut = 0;
-    // ERC20 tokens rewarded per block.
-    uint256 public rewardPerBlock;
-
-    // Info of each pool.
-    PoolInfo[] public poolInfo;
-    // Info of each user that stakes LP tokens.
-    mapping (uint256 => mapping (address => UserInfo)) public userInfo;
-    // Total allocation points. Must be the sum of all allocation points in all pools.
-    uint256 public totalAllocPoint = 0;
-
-    // The block number when farming starts.
-    uint256 public startBlock;
-    // The block number when farming ends.
-    uint256 public endBlock;
-
-    event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
-    event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
-    event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
-
-    constructor(IERC20 _erc20, uint256 _rewardPerBlock, uint256 _startBlock) public {
-        erc20 = _erc20;
-        rewardPerBlock = _rewardPerBlock;
-        startBlock = _startBlock;
-        endBlock = _startBlock;
-    }
-
-    // Number of LP pools
-    function poolLength() external view returns (uint256) {
-        return poolInfo.length;
-    }
-
-    // Fund the farm, increase the end block
-    function fund(uint256 _amount) public {
-        require(block.number < endBlock, "fund: too late, the farm is closed");
-
-        erc20.safeTransferFrom(address(msg.sender), address(this), _amount);
-        endBlock += _amount.div(rewardPerBlock);
-    }
-
-    // Add a new lp to the pool. Can only be called by the owner.
-    // DO NOT add the same LP token more than once. Rewards will be messed up if you do.
-    function add(uint256 _allocPoint, IERC20 _lpToken, bool _withUpdate) public onlyOwner {
-        if (_withUpdate) {
-            massUpdatePools();
-        }
-        uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
-        totalAllocPoint = totalAllocPoint.add(_allocPoint);
-        poolInfo.push(PoolInfo({
-            lpToken: _lpToken,
-            allocPoint: _allocPoint,
-            lastRewardBlock: lastRewardBlock,
-            accERC20PerShare: 0
-        }));
-    }
-
-    // Update the given pool's ERC20 allocation point. Can only be called by the owner.
-    function set(uint256 _pid, uint256 _allocPoint, bool _withUpdate) public onlyOwner {
-        if (_withUpdate) {
-            massUpdatePools();
-        }
-        totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
-        poolInfo[_pid].allocPoint = _allocPoint;
-    }
-
-    // View function to see deposited LP for a user.
-    function deposited(uint256 _pid, address _user) external view returns (uint256) {
-        UserInfo storage user = userInfo[_pid][_user];
-        return user.amount;
-    }
-
-    // View function to see pending ERC20s for a user.
-    function pending(uint256 _pid, address _user) external view returns (uint256) {
-        PoolInfo storage pool = poolInfo[_pid];
-        UserInfo storage user = userInfo[_pid][_user];
-        uint256 accERC20PerShare = pool.accERC20PerShare;
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        uint256 lastBlock = block.number < endBlock ? block.number : endBlock;
-
-        if (lastBlock > pool.lastRewardBlock && block.number > pool.lastRewardBlock && lpSupply != 0) {
-            uint256 nrOfBlocks = lastBlock.sub(pool.lastRewardBlock);
-            uint256 erc20Reward = nrOfBlocks.mul(rewardPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
-            accERC20PerShare = accERC20PerShare.add(erc20Reward.mul(1e36).div(lpSupply));
-        }
-
-        return user.amount.mul(accERC20PerShare).div(1e36).sub(user.rewardDebt);
-    }
-
-    // View function for total reward the farm has yet to pay out.
-    function totalPending() external view returns (uint256) {
-        if (block.number <= startBlock) {
-            return 0;
-        }
-
-        uint256 lastBlock = block.number < endBlock ? block.number : endBlock;
-        return rewardPerBlock.mul(lastBlock - startBlock).sub(paidOut);
-    }
-
-    // Update reward variables for all pools. Be careful of gas spending!
-    function massUpdatePools() public {
-        uint256 length = poolInfo.length;
-        for (uint256 pid = 0; pid < length; ++pid) {
-            updatePool(pid);
+            _notifyRewardAmount(r, _amount);
+            emit RewardAdded(token, _amount);
         }
     }
 
-    // Update reward variables of the given pool to be up-to-date.
-    function updatePool(uint256 _pid) public {
-        PoolInfo storage pool = poolInfo[_pid];
-        uint256 lastBlock = block.number < endBlock ? block.number : endBlock;
+    /**
+     @notice set reward duration. 
+     */
+    function setRewardsDuration(uint256 _rewardsDuration) external onlyOwner {
+        require(
+            _rewardsDuration > 0,
+            "reward durationi should be longer than 0"
+        );
+        REWARDS_DURATION = _rewardsDuration;
+        emit RewardsDurationUpdated(REWARDS_DURATION);
+    }
 
-        if (lastBlock <= pool.lastRewardBlock) {
-            return;
+    function setRewardsDistribution(address _rewardsDistribution)
+        external
+        onlyOwner
+    {
+        rewardsDistribution = _rewardsDistribution;
+    }
+
+    /* ========== External & Public Function  ========== */
+
+    function stake(uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+        updateReward(msg.sender)
+    {
+        require(amount > 0, "Cannot stake 0");
+        totalSupply += amount;
+        balanceOf[msg.sender] += amount;
+        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
+        emit Staked(msg.sender, amount);
+    }
+
+    function withdraw(uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+        updateReward(msg.sender)
+    {
+        require(amount > 0, "Cannot withdraw 0");
+        require(balanceOf[msg.sender] >= amount, "Balance is not enough.");
+        _claimReward();
+        totalSupply -= amount;
+        balanceOf[msg.sender] -= amount;
+        stakingToken.safeTransfer(msg.sender, amount);
+        emit Withdrawn(msg.sender, amount);
+    }
+
+    function claimReward()
+        public
+        nonReentrant
+        whenNotPaused
+        updateReward(msg.sender)
+    {
+            address token = rewardTokens[0];
+            Reward storage r = rewardData[token];
+            if (token != address(0)) {
+                uint256 reward = rewards[msg.sender][token];
+                if (reward > 0) {
+                    rewards[msg.sender][token] = 0;
+                    r.balance -= reward;
+                    IERC20Upgradeable(token).safeTransfer(msg.sender, reward);
+                    emit RewardPaid(msg.sender, token, reward);
+                }
+            }
+        
+    }
+
+    /* ========== Internal & Private Function  ========== */
+    function _claimReward() private {
+            address token = rewardTokens[0];
+            if (token != address(0)) {
+                Reward storage r = rewardData[token];
+
+                uint256 reward = rewards[msg.sender][token];
+                if (reward > 0) {
+                    rewards[msg.sender][token] = 0;
+                    r.balance -= reward;
+                    IERC20Upgradeable(token).safeTransfer(msg.sender, reward);
+                    emit RewardPaid(msg.sender, token, reward);
+                }
+            }
+        
+    }
+
+    function _notifyRewardAmount(Reward storage r, uint256 reward) internal {
+        if (block.timestamp >= r.periodFinish) {
+            r.rewardRate = reward / REWARDS_DURATION;
+        } else {
+            uint256 remaining = r.periodFinish - block.timestamp;
+            uint256 leftover = remaining * r.rewardRate;
+            r.rewardRate = (reward + leftover) / REWARDS_DURATION;
         }
-        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (lpSupply == 0) {
-            pool.lastRewardBlock = lastBlock;
-            return;
+        r.lastUpdateTime = block.timestamp;
+        r.periodFinish = block.timestamp + REWARDS_DURATION;
+        r.balance += reward;
+    }
+
+    /* ========== View Function  ========== */
+
+    function lastTimeRewardApplicable(address _rewardsToken)
+        public
+        view
+        returns (uint256)
+    {
+        uint256 periodFinish = rewardData[_rewardsToken].periodFinish;
+        return block.timestamp < periodFinish ? block.timestamp : periodFinish;
+    }
+
+    /**
+        @notice Calculate Reward per token. 
+        @param _rewardsToken address of reward token.
+     */
+    function rewardPerToken(address _rewardsToken)
+        public
+        view
+        returns (uint256)
+    {
+        if (totalSupply == 0) {
+            return rewardData[_rewardsToken].rewardPerTokenStored;
         }
-
-        uint256 nrOfBlocks = lastBlock.sub(pool.lastRewardBlock);
-        uint256 erc20Reward = nrOfBlocks.mul(rewardPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
-
-        pool.accERC20PerShare = pool.accERC20PerShare.add(erc20Reward.mul(1e36).div(lpSupply));
-        pool.lastRewardBlock = block.number;
+        uint256 duration = lastTimeRewardApplicable(_rewardsToken) -
+            rewardData[_rewardsToken].lastUpdateTime;
+        uint256 pending = (duration *
+            rewardData[_rewardsToken].rewardRate *
+            1e18) / totalSupply; //1e18 is for preventing rounding error
+        return rewardData[_rewardsToken].rewardPerTokenStored + pending;
     }
 
-    // Deposit LP tokens to Farm for ERC20 allocation.
-    function deposit(uint256 _pid, uint256 _amount) public {
-        PoolInfo storage pool = poolInfo[_pid];
-        UserInfo storage user = userInfo[_pid][msg.sender];
-        updatePool(_pid);
-        if (user.amount > 0) {
-            uint256 pendingAmount = user.amount.mul(pool.accERC20PerShare).div(1e36).sub(user.rewardDebt);
-            erc20Transfer(msg.sender, pendingAmount);
-        }
-        pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
-        user.amount = user.amount.add(_amount);
-        user.rewardDebt = user.amount.mul(pool.accERC20PerShare).div(1e36);
-        emit Deposit(msg.sender, _pid, _amount);
+    function earned(address account, address _rewardsToken)
+        public
+        view
+        returns (uint256)
+    {
+        uint256 rpt = rewardPerToken(_rewardsToken) -
+            userRewardPerTokenPaid[account][_rewardsToken];
+        return
+            (balanceOf[account] * rpt) / 1e18 + rewards[account][_rewardsToken];
     }
 
-    // Withdraw LP tokens from Farm.
-    function withdraw(uint256 _pid, uint256 _amount) public {
-        PoolInfo storage pool = poolInfo[_pid];
-        UserInfo storage user = userInfo[_pid][msg.sender];
-        require(user.amount >= _amount, "withdraw: can't withdraw more than deposit");
-        updatePool(_pid);
-        uint256 pendingAmount = user.amount.mul(pool.accERC20PerShare).div(1e36).sub(user.rewardDebt);
-        erc20Transfer(msg.sender, pendingAmount);
-        user.amount = user.amount.sub(_amount);
-        user.rewardDebt = user.amount.mul(pool.accERC20PerShare).div(1e36);
-        pool.lpToken.safeTransfer(address(msg.sender), _amount);
-        emit Withdraw(msg.sender, _pid, _amount);
+    function getRewardForDuration(address _rewardsToken)
+        external
+        view
+        returns (uint256)
+    {
+        return rewardData[_rewardsToken].rewardRate * REWARDS_DURATION;
     }
 
-    // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw(uint256 _pid) public {
-        PoolInfo storage pool = poolInfo[_pid];
-        UserInfo storage user = userInfo[_pid][msg.sender];
-        pool.lpToken.safeTransfer(address(msg.sender), user.amount);
-        emit EmergencyWithdraw(msg.sender, _pid, user.amount);
-        user.amount = 0;
-        user.rewardDebt = 0;
-    }
+    /* ========== MODIFIERS ========== */
 
-    // Transfer ERC20 and update the required ERC20 to payout all rewards
-    function erc20Transfer(address _to, uint256 _amount) internal {
-        erc20.transfer(_to, _amount);
-        paidOut += _amount;
+    modifier onlyRewardsDistribution() {
+        require(
+            msg.sender == rewardsDistribution,
+            "Caller is not RewardsDistribution contract"
+        );
+        _;
+    }
+    modifier updateReward(address account) {
+            address token = rewardTokens[0];
+            rewardData[token].rewardPerTokenStored = rewardPerToken(token);
+            rewardData[token].lastUpdateTime = lastTimeRewardApplicable(token);
+            if (account != address(0)) {
+                rewards[account][token] = earned(account, token);
+                userRewardPerTokenPaid[account][token] = rewardData[token]
+                    .rewardPerTokenStored;
+                emit UpdateReward(
+                    token,
+                    rewardData[token].rewardPerTokenStored,
+                    account,
+                    rewards[account][token],
+                    userRewardPerTokenPaid[account][token]
+                );
+            }
+        
+        _;
     }
 }
