@@ -1,4 +1,5 @@
 # GRINDEX 
+![Group 30](https://user-images.githubusercontent.com/101148026/226177593-cdecc32b-1472-4d50-8247-c1ed2bd8791b.png)
 ### Smart-Rebalancing Index Fund with ZERO fee.
 
 
