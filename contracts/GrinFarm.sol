@@ -15,7 +15,7 @@ interface IxGRINToken is IERC20Upgradeable {
     function burn(address _from, uint256 _value) external returns (bool);
 }
 
-contract GrinFarmV1 is
+contract GrinFarm is
     Initializable,
     UUPSUpgradeable,
     OwnableUpgradeable,

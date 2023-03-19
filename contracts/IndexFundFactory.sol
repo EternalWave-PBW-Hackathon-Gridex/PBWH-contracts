@@ -1,22 +1,10 @@
 //SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.9;
 
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
-import "./interfaces/IMakerOrderManager.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./BIIndexFund.sol";
 
-contract IndexFuncFactory is
-    Initializable,
-    UUPSUpgradeable,
-    OwnableUpgradeable,
-    ReentrancyGuardUpgradeable,
-    PausableUpgradeable
-{
+contract IndexFundFactory is Ownable{
     struct FundInfo {
         address lpAddr;
         address token0;
@@ -35,49 +23,18 @@ contract IndexFuncFactory is
 
     /* ========== Restricted Function  ========== */
 
-    function setInitialInfo(
-        IMakerOrderManager _makerOrderManage) external onlyOwner {
+    constructor(
+        IMakerOrderManager _makerOrderManage)  {
         makerOrderManager = _makerOrderManage;
     }
+
+
 
     function setRESOLUTION(int24 _RESOLUTION)
         external
         onlyOwner
     {
         RESOLUTION = _RESOLUTION;
-    }
-
-    /**
-        @notice Initialize UUPS upgradeable smart contract.
-     */
-    function initialize() external initializer {
-        __Ownable_init();
-        __ReentrancyGuard_init();
-        __Pausable_init();
-    }
-
-    /**
-        @notice restrict upgrade to only owner.
-     */
-    function _authorizeUpgrade(address newImplementation)
-        internal
-        virtual
-        override
-        onlyOwner
-    {}
-
-    /**
-        @notice pause contract functions.
-     */
-    function pause() external onlyOwner whenNotPaused {
-        _pause();
-    }
-
-    /**
-        @notice unpause contract functions.
-     */
-    function unpause() external onlyOwner whenPaused {
-        _unpause();
     }
 
     /* ========== External Function  ========== */
@@ -88,7 +45,7 @@ contract IndexFuncFactory is
         address _token0,
         address _token1,
         address _operator,
-        int24 _RESOLUTION) external whenNotPaused returns (address){
+        int24 _RESOLUTION) external returns (address){
 
         BIIndexFund bribe = new BIIndexFund(
             owner(),
@@ -101,6 +58,7 @@ contract IndexFuncFactory is
             _RESOLUTION
         );
 
+        fundCount++;
         fundAtAddress[address(bribe)] = FundInfo({
                 lpAddr: address(bribe),
                 token0: _token0,

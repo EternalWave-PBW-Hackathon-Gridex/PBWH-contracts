@@ -101,6 +101,7 @@ contract BIIndexFund is Ownable, Pausable{
 
     event Transfer(address indexed from, address indexed to, uint amount);
     event Approval(address indexed holder, address indexed spender, uint amount);
+    event PlaceOrder(uint256 orderId);
 
     string public name = "BIIndexFund LP";
     string public constant symbol = "BILP";
@@ -384,12 +385,19 @@ contract BIIndexFund is Ownable, Pausable{
 
     // Rebalancing 
 
-    function rebalance() external view {
+    function rebalance(address token, uint128 amount) external returns (uint256 orderId) {
         require(operator == msg.sender,"Caller is not an operator");
+        require(token == token0 || token == token1, "Token should be either of token0 or token1");
+        if(token == token0){
+            orderId = placeMakerOrderFortoken0(amount);
+        }else{
+            orderId = placeMakerOrderFortoken1(amount);
+        }
 
+        emit PlaceOrder(orderId);
     }
 
-    function placeMakerOrderFortoken0(uint128 amount) external returns (uint256 orderId) {
+    function placeMakerOrderFortoken0(uint128 amount) private returns (uint256 orderId) {
 
         IERC20(token0).transferFrom(msg.sender, address(this), amount);
 
@@ -417,12 +425,14 @@ contract BIIndexFund is Ownable, Pausable{
         });
 
         orderId = makerOrderManager.placeMakerOrder(parameters);
+        emit PlaceOrder(orderId);
+
     }
 
     /// @notice place a maker order for token1
     /// @param amount The amount of token1 to place a maker order
     /// @return orderId The id of the maker order
-    function placeMakerOrderFortoken1(uint128 amount) external returns (uint256 orderId) {
+    function placeMakerOrderFortoken1(uint128 amount) private returns (uint256 orderId) {
  
         IERC20(token1).transferFrom(msg.sender, address(this), amount);
         IERC20(token1).approve(address(makerOrderManager), amount);
@@ -448,6 +458,8 @@ contract BIIndexFund is Ownable, Pausable{
         });
 
         orderId = makerOrderManager.placeMakerOrder(parameters);
+        emit PlaceOrder(orderId);
+
     }
 
     /// @notice settle and collect the maker order
@@ -458,7 +470,7 @@ contract BIIndexFund is Ownable, Pausable{
             GridAddress.gridKey(token0, token1, RESOLUTION)
         );
 
-        (amount0, amount1) = IGrid(gridAddress).settleMakerOrderAndCollect(msg.sender, orderId, true);
+        (amount0, amount1) = IGrid(gridAddress).settleMakerOrderAndCollect(address(this), orderId, true);
     }
     
     // Modifier 
